@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	globals "github.com/UpCloudLtd/upcloud-go-api/internal"
+	upcloud "github.com/UpCloudLtd/upcloud-go-api/upcloud"
+
 	"github.com/blang/semver"
 	"github.com/hashicorp/go-cleanhttp"
 )
@@ -17,6 +20,10 @@ import (
 const (
 	DefaultAPIVersion = "1.3.6"
 	DefaultAPIBaseURL = "https://api.upcloud.com"
+
+	APIVersionEnv            = "UPCLOUD_API_VERSION"
+	APIBaseURLEnv            = "UPCLOUD_API_URL"
+	APIUnsecureSkipVerifyEnv = "UPCLOUD_API_INSECURE_SKIP_VERIFY"
 
 	// The default timeout (in seconds)
 	DefaultTimeout = 60
@@ -33,7 +40,18 @@ type Client struct {
 
 // New creates ands returns a new client configured with the specified user and password
 func New(userName, password string) *Client {
-	return NewWithHTTPClient(userName, password, cleanhttp.DefaultClient())
+	httpClient := &http.Client{}
+	httpTransport := cleanhttp.DefaultTransport()
+
+	if upcloud.IsEnvEnabled(APIUnsecureSkipVerifyEnv) {
+		httpTransport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+	}
+
+	httpClient.Transport = httpTransport
+
+	return NewWithHTTPClient(userName, password, httpClient)
 }
 
 // NewWithHTTPClient creates ands returns a new client configured with the specified user and password and
@@ -43,12 +61,13 @@ func NewWithHTTPClient(userName string, password string, httpClient *http.Client
 
 	client.userName = userName
 	client.password = password
+	client.UserAgent = fmt.Sprintf("upcloud-go-api/%s", globals.Version)
 	client.httpClient = httpClient
+
 	// Set the default timeout if the caller hasn't set its own
 	if client.httpClient.Timeout == 0 {
 		client.SetTimeout(time.Second * DefaultTimeout)
 	}
-	client.UserAgent = fmt.Sprintf("upcloud-go-api/%s", globals.Version)
 
 	return &client
 }
@@ -184,9 +203,12 @@ func (c *Client) PerformRequest(request *http.Request) ([]byte, error) {
 
 // Returns the base URL to use for API requests
 func (c *Client) getBaseURL() string {
-	urlVersion, _ := semver.Make(DefaultAPIVersion)
+	url := upcloud.GetEnvOrDefault(APIBaseURLEnv, DefaultAPIBaseURL)
+	version := upcloud.GetEnvOrDefault(APIVersionEnv, DefaultAPIVersion)
 
-	return fmt.Sprintf("%s/%d.%d", DefaultAPIBaseURL, urlVersion.Major, urlVersion.Minor)
+	APIVersion, _ := semver.Make(version)
+
+	return fmt.Sprintf("%s/%d.%d", url, APIVersion.Major, APIVersion.Minor)
 }
 
 // Parses the response and returns either the response body or an error
